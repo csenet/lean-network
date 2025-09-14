@@ -1,12 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NetworkDevice } from '../types/network';
 
+interface PingResult {
+  deviceId: string;
+  targetIP: string;
+  responseTime: number;
+  success: boolean;
+  timestamp: number;
+}
+
 interface TerminalProps {
   selectedDevice: NetworkDevice | null;
   devices: NetworkDevice[];
   onExecuteCommand: (deviceId: string, command: string) => void;
   isVisible: boolean;
   onToggle: () => void;
+  pingResults?: PingResult[];
 }
 
 interface TerminalLine {
@@ -20,7 +29,8 @@ const Terminal: React.FC<TerminalProps> = ({
   devices,
   onExecuteCommand,
   isVisible,
-  onToggle
+  onToggle,
+  pingResults = []
 }) => {
   const [history, setHistory] = useState<TerminalLine[]>([
     {
@@ -49,6 +59,27 @@ const Terminal: React.FC<TerminalProps> = ({
       inputRef.current.focus();
     }
   }, [isVisible]);
+
+  // Track displayed ping results to avoid duplicates
+  const [displayedPingResults, setDisplayedPingResults] = useState<Set<string>>(new Set());
+
+  // Watch for new ping results and add them to terminal history
+  useEffect(() => {
+    pingResults.forEach(result => {
+      const resultKey = `${result.deviceId}-${result.targetIP}-${result.timestamp}`;
+
+      if (!displayedPingResults.has(resultKey) &&
+          selectedDevice &&
+          result.deviceId === selectedDevice.id) {
+
+        const device = devices.find(d => d.ipAddress === result.targetIP);
+        if (device && result.success) {
+          addToHistory('output', `64 bytes from ${result.targetIP}: icmp_seq=1 ttl=64 time=${(result.responseTime).toFixed(1)}ms`);
+          setDisplayedPingResults(prev => new Set([...Array.from(prev), resultKey]));
+        }
+      }
+    });
+  }, [pingResults, selectedDevice, devices, displayedPingResults]);
 
   const addToHistory = (type: 'input' | 'output' | 'error', content: string) => {
     setHistory(prev => [...prev, {
@@ -148,11 +179,6 @@ const Terminal: React.FC<TerminalProps> = ({
     }
 
     addToHistory('output', `PING ${targetIp} (${targetDevice.name}): 56 data bytes`);
-    addToHistory('output', `64 bytes from ${targetIp}: icmp_seq=1 ttl=64 time=1.234ms`);
-    addToHistory('output', `64 bytes from ${targetIp}: icmp_seq=2 ttl=64 time=0.987ms`);
-    addToHistory('output', `64 bytes from ${targetIp}: icmp_seq=3 ttl=64 time=1.123ms`);
-    addToHistory('output', `--- ${targetIp} ping statistics ---`);
-    addToHistory('output', '3 packets transmitted, 3 received, 0% packet loss');
 
     // Trigger actual packet sending
     onExecuteCommand(selectedDevice.id, `ping ${targetIp}`);

@@ -1,0 +1,1156 @@
+import { useState, useCallback, useEffect } from 'react';
+import { NetworkState, NetworkDevice, NetworkSegment, Packet, Connection } from '../types/network';
+import {
+  generateSegmentId,
+  generatePacketId,
+  generateConnectionId,
+  generateDeviceId,
+  generateMacAddress,
+  getSubnetColors,
+  isInSameSubnet,
+  createDefaultPorts
+} from '../utils/networkUtils';
+
+export const useNetworkSimulation = () => {
+  const [state, setState] = useState<NetworkState>({
+    devices: [],
+    segments: [],
+    packets: [],
+    connections: [],
+    selectedDevice: null,
+    selectedSegment: null,
+    selectedConnection: null,
+    connectionMode: false,
+    simulationSpeed: 1,
+    pingResults: []
+  });
+
+  const addDevice = useCallback((device: NetworkDevice) => {
+    const deviceWithPorts = {
+      ...device,
+      ports: createDefaultPorts(device.type)
+    };
+    setState(prev => ({
+      ...prev,
+      devices: [...prev.devices, deviceWithPorts]
+    }));
+  }, []);
+
+  const updateDevice = useCallback((updatedDevice: NetworkDevice) => {
+    setState(prev => ({
+      ...prev,
+      devices: prev.devices.map(device =>
+        device.id === updatedDevice.id ? updatedDevice : device
+      )
+    }));
+  }, []);
+
+  const updateDevicePosition = useCallback((deviceId: string, newPosition: { x: number; y: number }) => {
+    setState(prev => ({
+      ...prev,
+      devices: prev.devices.map(device =>
+        device.id === deviceId ? { ...device, position: newPosition } : device
+      )
+    }));
+  }, []);
+
+  const deleteDevice = useCallback((deviceId: string) => {
+    setState(prev => ({
+      ...prev,
+      devices: prev.devices.filter(device => device.id !== deviceId),
+      segments: prev.segments.map(segment => ({
+        ...segment,
+        devices: segment.devices.filter(id => id !== deviceId)
+      })),
+      selectedDevice: prev.selectedDevice === deviceId ? null : prev.selectedDevice
+    }));
+  }, []);
+
+  const createSegment = useCallback((type: 'L2' | 'L3', name: string, network?: string, mask?: string) => {
+    const colors = getSubnetColors();
+    const usedColors = state.segments.map(s => s.color);
+    const availableColors = colors.filter(color => !usedColors.includes(color));
+    const segmentColor = availableColors[0] || colors[0];
+
+    const newSegment: NetworkSegment = {
+      id: generateSegmentId(),
+      type,
+      name,
+      network,
+      mask,
+      devices: [],
+      color: segmentColor
+    };
+
+    setState(prev => ({
+      ...prev,
+      segments: [...prev.segments, newSegment]
+    }));
+  }, [state.segments]);
+
+  const addDeviceToSegment = useCallback((deviceId: string, segmentId: string) => {
+    setState(prev => ({
+      ...prev,
+      segments: prev.segments.map(segment =>
+        segment.id === segmentId
+          ? { ...segment, devices: Array.from(new Set([...segment.devices, deviceId])) }
+          : segment
+      )
+    }));
+  }, []);
+
+  const removeDeviceFromSegment = useCallback((deviceId: string, segmentId: string) => {
+    setState(prev => ({
+      ...prev,
+      segments: prev.segments.map(segment =>
+        segment.id === segmentId
+          ? { ...segment, devices: segment.devices.filter(id => id !== deviceId) }
+          : segment
+      )
+    }));
+  }, []);
+
+  const autoAssignToSegments = useCallback(() => {
+    setState(prev => {
+      const newSegments = prev.segments.map(segment => ({ ...segment, devices: [] as string[] }));
+      
+      // Auto-assign devices to L3 segments based on IP addresses
+      prev.devices.forEach(device => {
+        if (device.ipAddress && device.subnetMask) {
+          const matchingSegment = newSegments.find(segment =>
+            segment.type === 'L3' &&
+            segment.network &&
+            segment.mask &&
+            isInSameSubnet(device.ipAddress!, segment.network, segment.mask)
+          );
+          
+          if (matchingSegment) {
+            matchingSegment.devices.push(device.id);
+          }
+        }
+      });
+
+      return {
+        ...prev,
+        segments: newSegments
+      };
+    });
+  }, []);
+
+  const updateArpTable = useCallback((device: NetworkDevice, ip: string, mac: string) => {
+    const updatedDevice = {
+      ...device,
+      arpTable: {
+        ...device.arpTable,
+        [ip]: mac
+      }
+    };
+    updateDevice(updatedDevice);
+  }, [updateDevice]);
+
+  // L2 path finding function (doesn't cross routers)
+  const findL2Path = (source: NetworkDevice, destination: NetworkDevice, devices: NetworkDevice[], connections: Connection[]): string[] => {
+    const visited = new Set<string>();
+    const queue: { deviceId: string; path: string[] }[] = [{ deviceId: source.id, path: [source.id] }];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+
+      if (current.deviceId === destination.id) {
+        return current.path;
+      }
+
+      if (visited.has(current.deviceId)) {
+        continue;
+      }
+
+      visited.add(current.deviceId);
+
+      // Find connected devices, but don't cross routers for L2 traffic
+      const connectedDevices = connections
+        .filter(c =>
+          (c.fromDeviceId === current.deviceId || c.toDeviceId === current.deviceId) &&
+          c.status === 'connected'
+        )
+        .map(c => c.fromDeviceId === current.deviceId ? c.toDeviceId : c.fromDeviceId)
+        .filter(deviceId => {
+          const device = devices.find(d => d.id === deviceId);
+          // Don't cross routers for L2 traffic (ARP)
+          return device && device.type !== 'router';
+        });
+
+      for (const deviceId of connectedDevices) {
+        if (!visited.has(deviceId)) {
+          queue.push({
+            deviceId,
+            path: [...current.path, deviceId]
+          });
+        }
+      }
+    }
+
+    // No L2 path found
+    return [];
+  };
+
+  // Enhanced path finding function
+  const findPath = (source: NetworkDevice, destination: NetworkDevice, devices: NetworkDevice[], connections: Connection[]): string[] => {
+    // Simple breadth-first search for now
+    const visited = new Set<string>();
+    const queue: { deviceId: string; path: string[] }[] = [{ deviceId: source.id, path: [source.id] }];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+
+      if (current.deviceId === destination.id) {
+        return current.path;
+      }
+
+      if (visited.has(current.deviceId)) continue;
+      visited.add(current.deviceId);
+
+      // Find connected devices
+      const connectedDevices = connections
+        .filter(conn => conn.fromDeviceId === current.deviceId || conn.toDeviceId === current.deviceId)
+        .map(conn => conn.fromDeviceId === current.deviceId ? conn.toDeviceId : conn.fromDeviceId);
+
+      for (const connectedId of connectedDevices) {
+        if (!visited.has(connectedId)) {
+          queue.push({
+            deviceId: connectedId,
+            path: [...current.path, connectedId]
+          });
+        }
+      }
+    }
+
+    // Fallback to direct connection if no path found
+    return [source.id, destination.id];
+  };
+
+  const sendPacket = useCallback((sourceId: string, destinationId: string, type: 'ICMP' | 'ARP' | 'DATA') => {
+    const sourceDevice = state.devices.find(d => d.id === sourceId);
+    const destinationDevice = state.devices.find(d => d.id === destinationId);
+
+    if (!sourceDevice || !destinationDevice) {
+      console.error('Source or destination device not found');
+      return;
+    }
+
+    // Check if ARP resolution is needed for ICMP packets
+    if (type === 'ICMP' && sourceDevice.ipAddress && destinationDevice.ipAddress) {
+      const destinationIP = destinationDevice.ipAddress;
+
+      // Check if destination is in the same L2 segment (same subnet)
+      const isInSameL2Segment = sourceDevice.subnetMask && destinationDevice.subnetMask &&
+        isInSameSubnet(sourceDevice.ipAddress, destinationIP, sourceDevice.subnetMask);
+
+      let nextHopDevice = destinationDevice;
+      let nextHopIP = destinationIP;
+      let nextHopMac = destinationDevice.macAddress;
+
+      if (!isInSameL2Segment) {
+        // Different L2 segment - need to use gateway
+        if (!sourceDevice.defaultGateway) {
+          console.error(`No default gateway configured for ${sourceDevice.name}`);
+          return;
+        }
+
+        // Find the gateway device
+        const gatewayDevice = state.devices.find(d => d.ipAddress === sourceDevice.defaultGateway);
+        if (!gatewayDevice) {
+          console.error(`Gateway ${sourceDevice.defaultGateway} not found`);
+          return;
+        }
+
+        nextHopDevice = gatewayDevice;
+        nextHopIP = sourceDevice.defaultGateway;
+        nextHopMac = gatewayDevice.macAddress;
+        console.log(`Different L2 segment: ${sourceDevice.name} will use gateway ${nextHopIP}`);
+
+        // Check if we need ARP for the gateway
+        if (!sourceDevice.arpTable[nextHopIP]) {
+          // Send ARP request for gateway first (only within L2 segment)
+          console.log(`ARP resolution needed for gateway: ${sourceDevice.name} needs MAC for ${nextHopIP}`);
+
+          // Find L2 path to gateway (should not cross routers for ARP)
+          const l2Path = findL2Path(sourceDevice, nextHopDevice, state.devices, state.connections);
+          if (!l2Path || l2Path.length === 0) {
+            console.error(`No L2 path found for ARP from ${sourceDevice.name} to gateway ${nextHopDevice.name}`);
+            return;
+          }
+
+          const arpRequest: Packet = {
+            id: generatePacketId(),
+            sourceDeviceId: sourceId,
+            destinationDeviceId: nextHopDevice.id,
+            sourceIP: sourceDevice.ipAddress || '',
+            destinationIP: nextHopIP,
+            sourceMac: sourceDevice.macAddress,
+            destinationMac: 'FF:FF:FF:FF:FF:FF', // Broadcast MAC
+            type: 'ARP',
+            status: 'sending',
+            path: l2Path,
+            currentPosition: 0,
+            createdAt: Date.now(),
+            // Store the original ICMP request to send after ARP resolution
+            needsReply: true,
+            replySourceId: destinationId, // Original destination for ICMP
+            replyDestinationId: sourceId
+          };
+
+          setState(prev => ({
+            ...prev,
+            packets: [...prev.packets, arpRequest]
+          }));
+          return;
+        } else {
+          // We have gateway's MAC, use it for next hop
+          nextHopMac = sourceDevice.arpTable[nextHopIP];
+        }
+      } else {
+        // Same L2 segment - check if we need ARP for destination
+        if (!sourceDevice.arpTable[destinationIP]) {
+          // Send ARP request for destination
+          console.log(`ARP resolution needed: ${sourceDevice.name} needs MAC for ${destinationIP}`);
+
+          const l2Path = findL2Path(sourceDevice, destinationDevice, state.devices, state.connections);
+          if (!l2Path || l2Path.length === 0) {
+            console.error(`No L2 path found for ARP from ${sourceDevice.name} to ${destinationDevice.name}`);
+            return;
+          }
+
+          const arpRequest: Packet = {
+            id: generatePacketId(),
+            sourceDeviceId: sourceId,
+            destinationDeviceId: destinationId,
+            sourceIP: sourceDevice.ipAddress || '',
+            destinationIP: destinationIP,
+            sourceMac: sourceDevice.macAddress,
+            destinationMac: 'FF:FF:FF:FF:FF:FF', // Broadcast MAC
+            type: 'ARP',
+            status: 'sending',
+            path: l2Path,
+            currentPosition: 0,
+            createdAt: Date.now(),
+            // Store the original ICMP request to send after ARP resolution
+            needsReply: true,
+            replySourceId: destinationId,
+            replyDestinationId: sourceId
+          };
+
+          setState(prev => ({
+            ...prev,
+            packets: [...prev.packets, arpRequest]
+          }));
+          return;
+        } else {
+          // We have destination's MAC
+          nextHopMac = sourceDevice.arpTable[destinationIP];
+        }
+      }
+    }
+
+    // Enhanced path finding with routing logic
+    const path = findPath(sourceDevice, destinationDevice, state.devices, state.connections);
+
+    // Determine the correct destination MAC for L2 frame
+    let frameDestinationMac = destinationDevice.macAddress;
+
+    if (type === 'ICMP' && sourceDevice.ipAddress && destinationDevice.ipAddress) {
+      const isInSameL2Segment = sourceDevice.subnetMask && destinationDevice.subnetMask &&
+        isInSameSubnet(sourceDevice.ipAddress, destinationDevice.ipAddress, sourceDevice.subnetMask);
+
+      if (!isInSameL2Segment && sourceDevice.defaultGateway) {
+        // For L3 communication, use gateway's MAC as frame destination
+        const gatewayMac = sourceDevice.arpTable[sourceDevice.defaultGateway];
+        if (gatewayMac) {
+          frameDestinationMac = gatewayMac;
+          console.log(`Using gateway MAC ${gatewayMac} for L3 packet to ${destinationDevice.ipAddress}`);
+        }
+      } else if (isInSameL2Segment) {
+        // For L2 communication, use destination's MAC
+        const destMac = sourceDevice.arpTable[destinationDevice.ipAddress];
+        if (destMac) {
+          frameDestinationMac = destMac;
+        }
+      }
+    }
+
+    const packet: Packet = {
+      id: generatePacketId(),
+      sourceDeviceId: sourceId,
+      destinationDeviceId: destinationId,
+      sourceIP: sourceDevice.ipAddress || '',
+      destinationIP: destinationDevice.ipAddress || '',
+      sourceMac: sourceDevice.macAddress,
+      destinationMac: frameDestinationMac, // Use correct L2 destination MAC
+      type,
+      status: 'sending',
+      path,
+      currentPosition: 0,
+      createdAt: Date.now()
+    };
+
+    // Add response info to ICMP packets for automatic reply generation
+    // Only generate replies for original ICMP requests, not for replies
+    if (type === 'ICMP' && !packet.isReply) {
+      packet.needsReply = true;
+      packet.replySourceId = destinationId;
+      packet.replyDestinationId = sourceId;
+    }
+
+    setState(prev => ({
+      ...prev,
+      packets: [...prev.packets, packet]
+    }));
+  }, [state.devices, updateArpTable]);
+
+  const clearSimulation = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      packets: [],
+      selectedDevice: null,
+      selectedSegment: null,
+      pingResults: []
+    }));
+  }, []);
+
+  const loadDirectPCsPreset = useCallback(() => {
+    const pc1Id = generateDeviceId();
+    const pc2Id = generateDeviceId();
+
+    const pc1: NetworkDevice = {
+      id: pc1Id,
+      name: 'PC1',
+      type: 'client',
+      position: { x: 200, y: 300 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.10',
+      subnetMask: '255.255.255.0',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const pc2: NetworkDevice = {
+      id: pc2Id,
+      name: 'PC2',
+      type: 'client',
+      position: { x: 600, y: 300 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.11',
+      subnetMask: '255.255.255.0',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const connection: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: pc2Id,
+      toPortId: pc2.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    // Update port connection status
+    pc1.ports[0].connectedTo = pc2.ports[0].id;
+    pc2.ports[0].connectedTo = pc1.ports[0].id;
+
+    setState(prev => ({
+      ...prev,
+      devices: [pc1, pc2],
+      connections: [connection]
+    }));
+  }, []);
+
+  const loadPCsSwitchPreset = useCallback(() => {
+    const pc1Id = generateDeviceId();
+    const pc2Id = generateDeviceId();
+    const switchId = generateDeviceId();
+
+    const pc1: NetworkDevice = {
+      id: pc1Id,
+      name: 'PC1',
+      type: 'client',
+      position: { x: 150, y: 200 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.10',
+      subnetMask: '255.255.255.0',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const pc2: NetworkDevice = {
+      id: pc2Id,
+      name: 'PC2',
+      type: 'client',
+      position: { x: 650, y: 200 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.11',
+      subnetMask: '255.255.255.0',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const switch1: NetworkDevice = {
+      id: switchId,
+      name: 'Switch1',
+      type: 'switch',
+      position: { x: 400, y: 300 },
+      macAddress: generateMacAddress(),
+      ports: createDefaultPorts('switch'),
+      arpTable: {},
+      macTable: {}
+    };
+
+    const connection1: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection2: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc2Id,
+      fromPortId: pc2.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[1].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    // Update port connection status
+    pc1.ports[0].connectedTo = switch1.ports[0].id;
+    switch1.ports[0].connectedTo = pc1.ports[0].id;
+    pc2.ports[0].connectedTo = switch1.ports[1].id;
+    switch1.ports[1].connectedTo = pc2.ports[0].id;
+
+    setState(prev => ({
+      ...prev,
+      devices: [pc1, pc2, switch1],
+      connections: [connection1, connection2]
+    }));
+  }, []);
+
+  const loadNetworkWithRouterPreset = useCallback(() => {
+    const pc1Id = generateDeviceId();
+    const pc2Id = generateDeviceId();
+    const pc3Id = generateDeviceId();
+    const switchId = generateDeviceId();
+    const routerId = generateDeviceId();
+
+    const pc1: NetworkDevice = {
+      id: pc1Id,
+      name: 'PC1',
+      type: 'client',
+      position: { x: 100, y: 200 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.10',
+      subnetMask: '255.255.255.0',
+      defaultGateway: '192.168.1.1',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const pc2: NetworkDevice = {
+      id: pc2Id,
+      name: 'PC2',
+      type: 'client',
+      position: { x: 300, y: 200 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.11',
+      subnetMask: '255.255.255.0',
+      defaultGateway: '192.168.1.1',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const switch1: NetworkDevice = {
+      id: switchId,
+      name: 'Switch1',
+      type: 'switch',
+      position: { x: 200, y: 350 },
+      macAddress: generateMacAddress(),
+      ports: createDefaultPorts('switch'),
+      arpTable: {},
+      macTable: {}
+    };
+
+    const router1: NetworkDevice = {
+      id: routerId,
+      name: 'Router1',
+      type: 'router',
+      position: { x: 500, y: 350 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.1.1',
+      subnetMask: '255.255.255.0',
+      ports: createDefaultPorts('router'),
+      arpTable: {},
+      routingTable: [
+        { network: '192.168.1.0', mask: '255.255.255.0', gateway: '0.0.0.0', interface: 'eth0' },
+        { network: '192.168.2.0', mask: '255.255.255.0', gateway: '0.0.0.0', interface: 'eth1' }
+      ]
+    };
+
+    const pc3: NetworkDevice = {
+      id: pc3Id,
+      name: 'PC3',
+      type: 'client',
+      position: { x: 700, y: 200 },
+      macAddress: generateMacAddress(),
+      ipAddress: '192.168.2.10',
+      subnetMask: '255.255.255.0',
+      defaultGateway: '192.168.2.1',
+      ports: createDefaultPorts('client'),
+      arpTable: {}
+    };
+
+    const connection1: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection2: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc2Id,
+      fromPortId: pc2.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[1].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection3: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: switchId,
+      fromPortId: switch1.ports[2].id,
+      toDeviceId: routerId,
+      toPortId: router1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection4: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: routerId,
+      fromPortId: router1.ports[1].id,
+      toDeviceId: pc3Id,
+      toPortId: pc3.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    // Update port connection status
+    pc1.ports[0].connectedTo = switch1.ports[0].id;
+    switch1.ports[0].connectedTo = pc1.ports[0].id;
+    pc2.ports[0].connectedTo = switch1.ports[1].id;
+    switch1.ports[1].connectedTo = pc2.ports[0].id;
+    switch1.ports[2].connectedTo = router1.ports[0].id;
+    router1.ports[0].connectedTo = switch1.ports[2].id;
+    router1.ports[1].connectedTo = pc3.ports[0].id;
+    pc3.ports[0].connectedTo = router1.ports[1].id;
+
+    setState(prev => ({
+      ...prev,
+      devices: [pc1, pc2, switch1, router1, pc3],
+      connections: [connection1, connection2, connection3, connection4]
+    }));
+  }, []);
+
+  const loadPreset = useCallback((presetName: string) => {
+    // Clear current state first
+    setState({
+      devices: [],
+      segments: [],
+      packets: [],
+      connections: [],
+      selectedDevice: null,
+      selectedSegment: null,
+      selectedConnection: null,
+      connectionMode: false,
+      simulationSpeed: 1,
+      pingResults: []
+    });
+
+    // Load specific preset
+    setTimeout(() => {
+      switch (presetName) {
+        case 'direct-pcs':
+          loadDirectPCsPreset();
+          break;
+        case 'pcs-switch':
+          loadPCsSwitchPreset();
+          break;
+        case 'network-with-router':
+          loadNetworkWithRouterPreset();
+          break;
+        default:
+          console.warn('Unknown preset:', presetName);
+      }
+    }, 50); // Small delay to ensure state is cleared
+  }, [loadDirectPCsPreset, loadPCsSwitchPreset, loadNetworkWithRouterPreset]);
+
+  const selectDevice = useCallback((deviceId: string | null) => {
+    setState(prev => ({
+      ...prev,
+      selectedDevice: deviceId,
+      selectedSegment: null
+    }));
+  }, []);
+
+  const selectSegment = useCallback((segmentId: string | null) => {
+    setState(prev => ({
+      ...prev,
+      selectedSegment: segmentId,
+      selectedDevice: null
+    }));
+  }, []);
+
+  const setSimulationSpeed = useCallback((speed: number) => {
+    setState(prev => ({
+      ...prev,
+      simulationSpeed: speed
+    }));
+  }, []);
+
+  // Connection management
+  const createConnection = useCallback((fromDeviceId: string, fromPortId: string, toDeviceId: string, toPortId: string) => {
+    const connection: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId,
+      fromPortId,
+      toDeviceId,
+      toPortId,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    setState(prev => {
+      // Update port connection status
+      const updatedDevices = prev.devices.map(device => {
+        if (device.id === fromDeviceId) {
+          return {
+            ...device,
+            ports: device.ports.map(port =>
+              port.id === fromPortId ? { ...port, connectedTo: toPortId } : port
+            )
+          };
+        }
+        if (device.id === toDeviceId) {
+          return {
+            ...device,
+            ports: device.ports.map(port =>
+              port.id === toPortId ? { ...port, connectedTo: fromPortId } : port
+            )
+          };
+        }
+        return device;
+      });
+
+      return {
+        ...prev,
+        devices: updatedDevices,
+        connections: [...prev.connections, connection],
+        connectionMode: false
+      };
+    });
+  }, []);
+
+  const removeConnection = useCallback((connectionId: string) => {
+    setState(prev => {
+      const connection = prev.connections.find(c => c.id === connectionId);
+      if (!connection) return prev;
+
+      // Update port connection status
+      const updatedDevices = prev.devices.map(device => {
+        if (device.id === connection.fromDeviceId || device.id === connection.toDeviceId) {
+          return {
+            ...device,
+            ports: device.ports.map(port => {
+              if (port.id === connection.fromPortId || port.id === connection.toPortId) {
+                return { ...port, connectedTo: undefined };
+              }
+              return port;
+            })
+          };
+        }
+        return device;
+      });
+
+      return {
+        ...prev,
+        devices: updatedDevices,
+        connections: prev.connections.filter(c => c.id !== connectionId)
+      };
+    });
+  }, []);
+
+  const toggleConnectionMode = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      connectionMode: !prev.connectionMode,
+      selectedDevice: null
+    }));
+  }, []);
+
+  const selectConnection = useCallback((connectionId: string | null) => {
+    setState(prev => ({
+      ...prev,
+      selectedConnection: connectionId,
+      selectedDevice: null,
+      selectedSegment: null
+    }));
+  }, []);
+
+  // Enhanced device selection for connection mode
+  const handleDeviceClickForConnection = useCallback((deviceId: string, portId?: string) => {
+    if (!state.connectionMode) {
+      selectDevice(deviceId);
+      return;
+    }
+
+    // Connection mode logic
+    const device = state.devices.find(d => d.id === deviceId);
+    if (!device) return;
+
+    // Find available port if not specified
+    const availablePort = portId ? device.ports.find(p => p.id === portId) : device.ports.find(p => !p.connectedTo);
+    if (!availablePort) {
+      alert('このデバイスに利用可能なポートがありません');
+      return;
+    }
+
+    // Check if we have a selected device for connection
+    if (state.selectedDevice && state.selectedDevice !== deviceId) {
+      const fromDevice = state.devices.find(d => d.id === state.selectedDevice);
+      const fromPort = fromDevice?.ports.find(p => !p.connectedTo);
+      
+      if (fromPort && fromDevice) {
+        createConnection(fromDevice.id, fromPort.id, deviceId, availablePort.id);
+      }
+    } else {
+      selectDevice(deviceId);
+    }
+  }, [state.connectionMode, state.selectedDevice, state.devices, selectDevice, createConnection]);
+
+  const handleCanvasClick = useCallback((position: { x: number; y: number }) => {
+    // If a segment is selected, we could potentially add a new device to it
+    setState(prev => ({
+      ...prev,
+      selectedDevice: null,
+      selectedSegment: null
+    }));
+  }, []);
+
+  // Packet lifecycle management - cleanup and response generation
+  useEffect(() => {
+    if (state.packets.length === 0) return;
+
+    const interval = setInterval(() => {
+      setState(prev => {
+        const newPackets: Packet[] = [];
+        const newPingResults: typeof prev.pingResults = [];
+        const updatedDevices = [...prev.devices]; // Copy for potential MAC learning updates
+
+        const remainingPackets = prev.packets.filter(packet => {
+          // Calculate if packet has reached the end of its path
+          const timeSinceCreated = Date.now() - packet.createdAt;
+          const speed = 200 * prev.simulationSpeed; // 増加: より滑らかな動き
+          const distanceTraveled = (timeSinceCreated / 1000) * speed;
+
+          // Calculate total path distance
+          let totalDistance = 0;
+          for (let i = 0; i < packet.path.length - 1; i++) {
+            const fromDevice = prev.devices.find(d => d.id === packet.path[i]);
+            const toDevice = prev.devices.find(d => d.id === packet.path[i + 1]);
+
+            if (fromDevice && toDevice) {
+              const dx = toDevice.position.x - fromDevice.position.x;
+              const dy = toDevice.position.y - fromDevice.position.y;
+              totalDistance += Math.sqrt(dx * dx + dy * dy);
+            }
+          }
+
+          const hasReachedDestination = distanceTraveled >= totalDistance;
+
+          // MAC learning and router processing: when packet passes through devices
+          packet.path.forEach((deviceId, index) => {
+            const device = updatedDevices.find(d => d.id === deviceId);
+
+            if (device && device.type === 'switch' && device.macTable && index > 0) {
+              // Switch MAC learning
+              const prevDeviceId = packet.path[index - 1];
+              const prevDevice = updatedDevices.find(d => d.id === prevDeviceId);
+
+              if (prevDevice) {
+                // Find the port connection
+                const connection = prev.connections.find(c =>
+                  (c.fromDeviceId === prevDeviceId && c.toDeviceId === deviceId) ||
+                  (c.fromDeviceId === deviceId && c.toDeviceId === prevDeviceId)
+                );
+
+                if (connection) {
+                  const portId = connection.fromDeviceId === deviceId ?
+                    connection.fromPortId : connection.toPortId;
+
+                  // Learn MAC address on this port
+                  device.macTable[packet.sourceMac] = portId;
+                  console.log(`Switch ${device.name} learned MAC ${packet.sourceMac} on port ${portId}`);
+                }
+              }
+            } else if (device && device.type === 'router' && index > 0 && index < packet.path.length - 1) {
+              // Router packet forwarding processing
+              const nextDeviceId = packet.path[index + 1];
+              const nextDevice = updatedDevices.find(d => d.id === nextDeviceId);
+
+              if (packet.type === 'ICMP' && packet.destinationIP && packet.sourceIP) {
+                // Check if this router is the final destination
+                const isRouterDestination = device.ipAddress === packet.destinationIP;
+
+                if (isRouterDestination) {
+                  console.log(`Router ${device.name} is destination for ICMP packet from ${packet.sourceIP}`);
+
+                  // Generate ICMP reply from router
+                  if (packet.needsReply && !packet.isReply) {
+                    const replyId = `reply-${packet.id}`;
+                    const replyAlreadyExists = prev.packets.some(p => p.id === replyId) ||
+                                             newPackets.some(p => p.id === replyId);
+
+                    if (!replyAlreadyExists) {
+                      const sourceDevice = updatedDevices.find(d => d.id === packet.sourceDeviceId);
+                      if (sourceDevice) {
+                        const replyPath = findPath(device, sourceDevice, updatedDevices, prev.connections);
+                        const routerReplyPacket: Packet = {
+                          id: replyId,
+                          sourceDeviceId: device.id,
+                          destinationDeviceId: packet.sourceDeviceId,
+                          sourceIP: packet.destinationIP, // Router's IP
+                          destinationIP: packet.sourceIP, // Original source
+                          sourceMac: device.macAddress,
+                          destinationMac: sourceDevice.macAddress,
+                          type: 'ICMP',
+                          status: 'sending',
+                          path: replyPath,
+                          currentPosition: 0,
+                          createdAt: Date.now() + 100,
+                          isReply: true
+                        };
+                        newPackets.push(routerReplyPacket);
+                        console.log(`Router ${device.name} generated ICMP reply to ${packet.sourceIP}`);
+                      }
+                    }
+                  }
+                } else if (nextDevice) {
+                  console.log(`Router ${device.name} forwarding packet from ${packet.sourceIP} to ${packet.destinationIP}`);
+
+                  // Router learns source MAC for return traffic
+                  const prevDeviceId = packet.path[index - 1];
+                  const prevDevice = updatedDevices.find(d => d.id === prevDeviceId);
+
+                  const routerIndex = updatedDevices.findIndex(d => d.id === device.id);
+                  if (routerIndex !== -1) {
+                    const updatedArpTable = { ...updatedDevices[routerIndex].arpTable };
+
+                  // Learn source MAC from incoming packet
+                  if (prevDevice && packet.sourceIP) {
+                    updatedArpTable[packet.sourceIP] = prevDevice.macAddress;
+                    console.log(`Router ${device.name} learned source MAC for ${packet.sourceIP}: ${prevDevice.macAddress}`);
+                  }
+
+                  // Resolve next hop MAC address
+                  if (nextDevice.type !== 'router') {
+                    // Check if router has ARP entry for destination
+                    let nextHopMac = updatedArpTable[packet.destinationIP];
+
+                    if (!nextHopMac) {
+                      // Router needs to ARP for the destination in the next segment
+                      nextHopMac = nextDevice.macAddress; // Fallback to direct MAC
+                      updatedArpTable[packet.destinationIP] = nextDevice.macAddress;
+                      console.log(`Router ${device.name} learned destination MAC for ${packet.destinationIP}: ${nextDevice.macAddress}`);
+                    }
+
+                    // Update packet's MAC addresses for the next segment
+                    packet.sourceMac = device.macAddress; // Router becomes the source
+                    packet.destinationMac = nextHopMac; // Next hop MAC
+
+                    console.log(`Router ${device.name} forwarded packet: src=${packet.sourceMac}, dst=${packet.destinationMac}`);
+                  }
+
+                  // Update router's ARP table
+                  updatedDevices[routerIndex] = {
+                    ...updatedDevices[routerIndex],
+                    arpTable: updatedArpTable
+                  };
+                }
+              }
+            }
+
+          // Handle ARP packet arrival
+          if (hasReachedDestination && packet.type === 'ARP') {
+            const sourceDevice = updatedDevices.find(d => d.id === packet.sourceDeviceId);
+            const targetDevice = updatedDevices.find(d => d.id === packet.destinationDeviceId);
+
+            if (sourceDevice && targetDevice && targetDevice.ipAddress && sourceDevice.ipAddress) {
+              // Simple ARP handling - update ARP table
+              const targetDeviceIndex = updatedDevices.findIndex(d => d.id === targetDevice.id);
+              if (targetDeviceIndex !== -1) {
+                updatedDevices[targetDeviceIndex] = {
+                  ...updatedDevices[targetDeviceIndex],
+                  arpTable: {
+                    ...updatedDevices[targetDeviceIndex].arpTable,
+                    [sourceDevice.ipAddress]: sourceDevice.macAddress
+                  }
+                };
+              }
+
+                // Source device (original requester) learns target's MAC
+                const targetDeviceIndex = updatedDevices.findIndex(d => d.id === targetDevice.id);
+                if (targetDeviceIndex !== -1) {
+                  updatedDevices[targetDeviceIndex] = {
+                    ...updatedDevices[targetDeviceIndex],
+                    arpTable: {
+                      ...updatedDevices[targetDeviceIndex].arpTable,
+                      [sourceDevice.ipAddress]: sourceDevice.macAddress
+                    }
+                  };
+                }
+
+                // Now send the original ICMP packet
+                if (packet.needsReply && packet.replySourceId && packet.replyDestinationId) {
+                  const icmpSourceDevice = updatedDevices.find(d => d.id === packet.replyDestinationId);
+                  const icmpTargetDevice = updatedDevices.find(d => d.id === packet.replySourceId);
+
+                  if (icmpSourceDevice && icmpTargetDevice) {
+                    const icmpPath = findPath(icmpSourceDevice, icmpTargetDevice, updatedDevices, prev.connections);
+                    const icmpPacket: Packet = {
+                      id: generatePacketId(),
+                      sourceDeviceId: icmpSourceDevice.id,
+                      destinationDeviceId: icmpTargetDevice.id,
+                      sourceIP: icmpSourceDevice.ipAddress || '',
+                      destinationIP: icmpTargetDevice.ipAddress || '',
+                      sourceMac: icmpSourceDevice.macAddress,
+                      destinationMac: icmpTargetDevice.macAddress,
+                      type: 'ICMP',
+                      status: 'sending',
+                      path: icmpPath,
+                      currentPosition: 0,
+                      createdAt: Date.now() + 100,
+                      needsReply: true,
+                      replySourceId: icmpTargetDevice.id,
+                      replyDestinationId: icmpSourceDevice.id,
+                      isReply: false // This is the original request, not a reply
+                    };
+
+                    newPackets.push(icmpPacket);
+                  }
+                }
+              }
+            }
+          }
+
+          // Record ping result when ICMP packet reaches destination
+          if (hasReachedDestination && packet.type === 'ICMP') {
+            const targetDevice = prev.devices.find(d => d.id === packet.destinationDeviceId);
+            if (targetDevice && targetDevice.ipAddress) {
+              newPingResults.push({
+                deviceId: packet.sourceDeviceId,
+                targetIP: targetDevice.ipAddress,
+                responseTime: timeSinceCreated,
+                success: true,
+                timestamp: Date.now()
+              });
+            }
+          }
+
+          // Generate reply packet for ICMP when original packet reaches destination
+          // Check if reply already exists to prevent duplicates
+          const replyId = `reply-${packet.id}`;
+          const replyAlreadyExists = prev.packets.some(p => p.id === replyId) ||
+                                   newPackets.some(p => p.id === replyId);
+
+          if (hasReachedDestination && packet.type === 'ICMP' && packet.needsReply &&
+              packet.replySourceId && packet.replyDestinationId && !packet.isReply && !replyAlreadyExists) {
+            const replySourceDevice = prev.devices.find(d => d.id === packet.replySourceId);
+            const replyDestinationDevice = prev.devices.find(d => d.id === packet.replyDestinationId);
+
+            if (replySourceDevice && replyDestinationDevice) {
+              const replyPath = findPath(replySourceDevice, replyDestinationDevice, prev.devices, prev.connections);
+              const replyPacket: Packet = {
+                id: replyId, // Use predictable ID to prevent duplicates
+                sourceDeviceId: packet.replySourceId,
+                destinationDeviceId: packet.replyDestinationId,
+                sourceIP: replySourceDevice.ipAddress || '',
+                destinationIP: replyDestinationDevice.ipAddress || '',
+                sourceMac: replySourceDevice.macAddress,
+                destinationMac: replyDestinationDevice.macAddress,
+                type: 'ICMP',
+                status: 'sending',
+                path: replyPath,
+                currentPosition: 0,
+                createdAt: Date.now() + 100, // Small delay for more natural processing
+                isReply: true // Mark this as a reply packet
+              };
+
+              newPackets.push(replyPacket);
+            }
+          }
+
+          // Keep packet if it hasn't reached the end (with small buffer)
+          return distanceTraveled < totalDistance + 50;
+        });
+
+        return {
+          ...prev,
+          devices: updatedDevices,
+          packets: [...remainingPackets, ...newPackets],
+          pingResults: [...prev.pingResults, ...newPingResults]
+        };
+      });
+    }, 50); // より頻繁にチェックしてより滑らかに
+
+    return () => clearInterval(interval);
+  }, [state.packets.length, state.simulationSpeed]);
+
+  // Auto-assign devices to segments when IP addresses change
+  const devicesKey = state.devices.map(d => (d.ipAddress || '') + (d.subnetMask || '')).join(',');
+  useEffect(() => {
+    autoAssignToSegments();
+  }, [devicesKey, autoAssignToSegments]);
+
+  return {
+    ...state,
+    addDevice,
+    updateDevice,
+    updateDevicePosition,
+    deleteDevice,
+    createSegment,
+    addDeviceToSegment,
+    removeDeviceFromSegment,
+    sendPacket,
+    clearSimulation,
+    loadPreset,
+    selectDevice,
+    selectSegment,
+    selectConnection,
+    setSimulationSpeed,
+    handleCanvasClick,
+    createConnection,
+    removeConnection,
+    toggleConnectionMode,
+    handleDeviceClickForConnection,
+    selectedDeviceData: state.selectedDevice ? state.devices.find(d => d.id === state.selectedDevice) || null : null,
+    selectedSegmentData: state.selectedSegment ? state.segments.find(s => s.id === state.selectedSegment) || null : null,
+    selectedConnectionData: state.selectedConnection ? state.connections.find(c => c.id === state.selectedConnection) || null : null
+  };
+};

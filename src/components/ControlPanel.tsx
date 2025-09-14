@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { NetworkDevice, Connection } from '../types/network';
-import { generateMacAddress, generateDeviceId, validateIpAddress } from '../utils/networkUtils';
+import { generateMacAddress, generateDeviceId } from '../utils/networkUtils';
 
 interface ControlPanelProps {
   onAddDevice: (device: NetworkDevice) => void;
-  onCreateSegment: (type: 'L2' | 'L3', name: string, network?: string, mask?: string) => void;
   onSendPacket: (sourceId: string, destinationId: string, type: 'ICMP' | 'ARP' | 'DATA') => void;
   onClearSimulation: () => void;
   onToggleConnectionMode: () => void;
@@ -20,7 +19,6 @@ interface ControlPanelProps {
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
   onAddDevice,
-  onCreateSegment,
   onSendPacket,
   onClearSimulation,
   onToggleConnectionMode,
@@ -33,20 +31,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onSimulationSpeedChange,
   onLoadPreset
 }) => {
-  const [deviceForm, setDeviceForm] = useState({
-    name: '',
-    type: 'client' as 'client' | 'router' | 'switch',
-    ipAddress: '',
-    subnetMask: '255.255.255.0',
-    defaultGateway: ''
-  });
+  const [deviceType, setDeviceType] = useState<'client' | 'router' | 'switch'>('client');
 
-  const [segmentForm, setSegmentForm] = useState({
-    type: 'L2' as 'L2' | 'L3',
-    name: '',
-    network: '',
-    mask: '255.255.255.0'
-  });
 
   const [packetForm, setPacketForm] = useState({
     sourceId: '',
@@ -55,71 +41,30 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   });
 
   const handleAddDevice = () => {
-    if (!deviceForm.name) {
-      alert('デバイス名を入力してください');
-      return;
-    }
+    const deviceNames = {
+      client: 'PC',
+      router: 'Router',
+      switch: 'Switch'
+    };
 
-    if (deviceForm.ipAddress && !validateIpAddress(deviceForm.ipAddress)) {
-      alert('正しいIPアドレスを入力してください');
-      return;
-    }
+    const existingCount = devices.filter(d => d.type === deviceType).length;
+    const deviceName = `${deviceNames[deviceType]}${existingCount + 1}`;
 
     const newDevice: NetworkDevice = {
       id: generateDeviceId(),
-      name: deviceForm.name,
-      type: deviceForm.type,
+      name: deviceName,
+      type: deviceType,
       position: { x: Math.random() * 800 + 100, y: Math.random() * 400 + 100 },
       macAddress: generateMacAddress(),
-      ipAddress: deviceForm.ipAddress || undefined,
-      subnetMask: deviceForm.subnetMask || undefined,
-      defaultGateway: deviceForm.defaultGateway || undefined,
       arpTable: {},
-      routingTable: deviceForm.type === 'router' ? [] : undefined,
+      macTable: deviceType === 'switch' ? {} : undefined,
+      routingTable: deviceType === 'router' ? [] : undefined,
       ports: [] // This will be populated by the hook
     };
 
     onAddDevice(newDevice);
-    setDeviceForm({
-      name: '',
-      type: 'client',
-      ipAddress: '',
-      subnetMask: '255.255.255.0',
-      defaultGateway: ''
-    });
   };
 
-  const handleCreateSegment = () => {
-    if (!segmentForm.name) {
-      alert('セグメント名を入力してください');
-      return;
-    }
-
-    if (segmentForm.type === 'L3') {
-      if (!segmentForm.network || !validateIpAddress(segmentForm.network)) {
-        alert('正しいネットワークアドレスを入力してください');
-        return;
-      }
-      if (!segmentForm.mask || !validateIpAddress(segmentForm.mask)) {
-        alert('正しいサブネットマスクを入力してください');
-        return;
-      }
-    }
-
-    onCreateSegment(
-      segmentForm.type,
-      segmentForm.name,
-      segmentForm.network || undefined,
-      segmentForm.mask || undefined
-    );
-
-    setSegmentForm({
-      type: 'L2',
-      name: '',
-      network: '',
-      mask: '255.255.255.0'
-    });
-  };
 
   const handleSendPacket = () => {
     if (!packetForm.sourceId || !packetForm.destinationId) {
@@ -142,77 +87,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       <div className="panel-section">
         <h4>デバイス追加</h4>
         <div className="form-group">
-          <input
-            type="text"
-            placeholder="デバイス名"
-            value={deviceForm.name}
-            onChange={(e) => setDeviceForm({ ...deviceForm, name: e.target.value })}
-          />
           <select
-            value={deviceForm.type}
-            onChange={(e) => setDeviceForm({ ...deviceForm, type: e.target.value as any })}
+            value={deviceType}
+            onChange={(e) => setDeviceType(e.target.value as 'client' | 'router' | 'switch')}
           >
             <option value="client">クライアント</option>
             <option value="router">ルーター</option>
             <option value="switch">スイッチ</option>
           </select>
-          <input
-            type="text"
-            placeholder="IPアドレス (オプション)"
-            value={deviceForm.ipAddress}
-            onChange={(e) => setDeviceForm({ ...deviceForm, ipAddress: e.target.value })}
-          />
-          <input
-            type="text"
-            placeholder="サブネットマスク"
-            value={deviceForm.subnetMask}
-            onChange={(e) => setDeviceForm({ ...deviceForm, subnetMask: e.target.value })}
-          />
-          <input
-            type="text"
-            placeholder="デフォルトゲートウェイ (オプション)"
-            value={deviceForm.defaultGateway}
-            onChange={(e) => setDeviceForm({ ...deviceForm, defaultGateway: e.target.value })}
-          />
           <button onClick={handleAddDevice}>デバイス追加</button>
         </div>
       </div>
 
-      <div className="panel-section">
-        <h4>セグメント作成</h4>
-        <div className="form-group">
-          <select
-            value={segmentForm.type}
-            onChange={(e) => setSegmentForm({ ...segmentForm, type: e.target.value as 'L2' | 'L3' })}
-          >
-            <option value="L2">L2セグメント</option>
-            <option value="L3">L3セグメント</option>
-          </select>
-          <input
-            type="text"
-            placeholder="セグメント名"
-            value={segmentForm.name}
-            onChange={(e) => setSegmentForm({ ...segmentForm, name: e.target.value })}
-          />
-          {segmentForm.type === 'L3' && (
-            <>
-              <input
-                type="text"
-                placeholder="ネットワークアドレス"
-                value={segmentForm.network}
-                onChange={(e) => setSegmentForm({ ...segmentForm, network: e.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="サブネットマスク"
-                value={segmentForm.mask}
-                onChange={(e) => setSegmentForm({ ...segmentForm, mask: e.target.value })}
-              />
-            </>
-          )}
-          <button onClick={handleCreateSegment}>セグメント作成</button>
-        </div>
-      </div>
 
       <div className="panel-section">
         <h4>パケット送信</h4>
@@ -222,22 +108,26 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             onChange={(e) => setPacketForm({ ...packetForm, sourceId: e.target.value })}
           >
             <option value="">送信元を選択</option>
-            {devices.map(device => (
-              <option key={device.id} value={device.id}>
-                {device.name} ({device.ipAddress || 'IP未設定'})
-              </option>
-            ))}
+            {devices
+              .filter(device => device.ipAddress) // IP設定済みのデバイスのみ
+              .map(device => (
+                <option key={device.id} value={device.id}>
+                  {device.name} ({device.ipAddress})
+                </option>
+              ))}
           </select>
           <select
             value={packetForm.destinationId}
             onChange={(e) => setPacketForm({ ...packetForm, destinationId: e.target.value })}
           >
             <option value="">宛先を選択</option>
-            {devices.map(device => (
-              <option key={device.id} value={device.id}>
-                {device.name} ({device.ipAddress || 'IP未設定'})
-              </option>
-            ))}
+            {devices
+              .filter(device => device.ipAddress) // IP設定済みのデバイスのみ
+              .map(device => (
+                <option key={device.id} value={device.id}>
+                  {device.name} ({device.ipAddress})
+                </option>
+              ))}
           </select>
           <select
             value={packetForm.type}
@@ -311,15 +201,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </div>
       </div>
 
-      <div className="panel-section">
-        <h4>学習ヒント</h4>
-        <div className="hints">
-          <p>• <strong>L2セグメント</strong>: 同じスイッチに接続されたデバイス群</p>
-          <p>• <strong>L3セグメント</strong>: 同じサブネットのデバイス群</p>
-          <p>• <strong>ARP</strong>: IPアドレスからMACアドレスを解決</p>
-          <p>• <strong>ルーティング</strong>: 異なるセグメント間の通信</p>
-        </div>
-      </div>
 
       {onLoadPreset && (
         <div className="panel-section">

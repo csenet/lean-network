@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { NetworkDevice, NetworkSegment, Packet, Connection } from '../types/network';
 
 interface NetworkCanvasProps {
@@ -10,6 +10,7 @@ interface NetworkCanvasProps {
   selectedSegment: string | null;
   selectedConnection: string | null;
   connectionMode: boolean;
+  simulationSpeed?: number;
   onDeviceClick: (deviceId: string) => void;
   onSegmentClick: (segmentId: string) => void;
   onConnectionClick: (connectionId: string) => void;
@@ -26,6 +27,7 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
   selectedSegment,
   selectedConnection,
   connectionMode,
+  simulationSpeed = 1,
   onDeviceClick,
   onSegmentClick,
   onConnectionClick,
@@ -75,8 +77,35 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
     }
   };
 
+  // Easing function for smooth animation
+  const easeInOutCubic = (t: number): number => {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  };
+
   // Canvas rendering
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // High DPI canvas setup
+    const displayWidth = canvasSize.width;
+    const displayHeight = canvasSize.height;
+
+    canvas.width = displayWidth * pixelRatio;
+    canvas.height = displayHeight * pixelRatio;
+    canvas.style.width = displayWidth + 'px';
+    canvas.style.height = displayHeight + 'px';
+
+    ctx.scale(pixelRatio, pixelRatio);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Clear canvas
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
+
     // Drawing functions
     const drawGrid = (ctx: CanvasRenderingContext2D) => {
       ctx.strokeStyle = '#f0f0f0';
@@ -261,46 +290,109 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
     const drawEnhancedPacket = (ctx: CanvasRenderingContext2D, packet: Packet) => {
       if (packet.path.length < 2) return;
 
-      const currentDeviceId = packet.path[packet.currentPosition];
-      const nextDeviceId = packet.path[packet.currentPosition + 1];
+      // Calculate total path distance for constant speed
+      let totalDistance = 0;
+      const segmentDistances: number[] = [];
 
-      const currentDevice = devices.find(d => d.id === currentDeviceId);
-      const nextDevice = devices.find(d => d.id === nextDeviceId);
+      for (let i = 0; i < packet.path.length - 1; i++) {
+        const fromDevice = devices.find(d => d.id === packet.path[i]);
+        const toDevice = devices.find(d => d.id === packet.path[i + 1]);
 
-      if (!currentDevice || !nextDevice) return;
-
-      // Smooth animation progress
-      const timeSinceCreated = Date.now() - packet.createdAt;
-      const animationDuration = 2000; // 2 seconds per hop
-      const progress = Math.min((timeSinceCreated % animationDuration) / animationDuration, 1);
-
-      const x = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * progress;
-      const y = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * progress;
-
-      // Draw packet trail effect
-      const trailLength = 5;
-      for (let i = 0; i < trailLength; i++) {
-        const trailProgress = Math.max(0, progress - (i * 0.1));
-        const trailX = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * trailProgress;
-        const trailY = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * trailProgress;
-        const alpha = (1 - i / trailLength) * 0.3;
-
-        ctx.fillStyle = getPacketColor(packet.type) + Math.floor(alpha * 255).toString(16).padStart(2, '0');
-        ctx.beginPath();
-        ctx.arc(trailX, trailY, 6 - i, 0, 2 * Math.PI);
-        ctx.fill();
+        if (fromDevice && toDevice) {
+          const dx = toDevice.position.x - fromDevice.position.x;
+          const dy = toDevice.position.y - fromDevice.position.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          segmentDistances.push(distance);
+          totalDistance += distance;
+        }
       }
 
-      // Draw main packet with glow effect
-      const gradient = ctx.createRadialGradient(x, y, 0, x, y, 15);
-      gradient.addColorStop(0, getPacketColor(packet.type));
-      gradient.addColorStop(0.7, getPacketColor(packet.type) + '80');
-      gradient.addColorStop(1, getPacketColor(packet.type) + '00');
+      if (totalDistance === 0) return;
 
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(x, y, 15, 0, 2 * Math.PI);
-      ctx.fill();
+      // Calculate position based on constant speed (pixels per second) - match useNetworkSimulation speed
+      const speed = 200 * simulationSpeed; // pixels per second
+      const timeSinceCreated = Date.now() - packet.createdAt;
+      const distanceTraveled = (timeSinceCreated / 1000) * speed;
+
+      // Don't go beyond the total distance
+      const clampedDistance = Math.min(distanceTraveled, totalDistance);
+
+      // Find which segment we're in based on distance with bounds checking
+      let currentDistance = 0;
+      let segmentIndex = 0;
+
+      for (let i = 0; i < segmentDistances.length; i++) {
+        if (currentDistance + segmentDistances[i] >= clampedDistance) {
+          segmentIndex = i;
+          break;
+        }
+        currentDistance += segmentDistances[i];
+      }
+
+      // Ensure segmentIndex is within bounds
+      segmentIndex = Math.min(segmentIndex, segmentDistances.length - 1);
+
+      // Calculate position within the current segment with smoother transitions
+      const remainingDistance = clampedDistance - currentDistance;
+      const segmentLength = segmentDistances[segmentIndex] || 1;
+      const segmentProgress = Math.min(Math.max(remainingDistance / segmentLength, 0), 1);
+
+      // Safe device lookup with bounds checking
+      const fromDeviceId = packet.path[segmentIndex];
+      const toDeviceId = packet.path[Math.min(segmentIndex + 1, packet.path.length - 1)];
+
+      const fromDevice = devices.find(d => d.id === fromDeviceId);
+      const toDevice = devices.find(d => d.id === toDeviceId);
+
+      if (!fromDevice || !toDevice) return;
+
+      // Linear interpolation for constant speed
+      const x = fromDevice.position.x + (toDevice.position.x - fromDevice.position.x) * segmentProgress;
+      const y = fromDevice.position.y + (toDevice.position.y - fromDevice.position.y) * segmentProgress;
+
+      // Trail effect disabled to prevent ghosting
+      // const trailLength = 6;
+      // const trailSpacing = 15; // pixels between trail points
+      // for (let i = 1; i <= trailLength; i++) {
+      //   const trailDistance = Math.max(0, clampedDistance - (i * trailSpacing));
+
+      //   if (trailDistance <= 0) continue;
+
+      //   // Find segment for this trail point
+      //   let trailCurrentDistance = 0;
+      //   let trailSegmentIndex = 0;
+
+      //   for (let j = 0; j < segmentDistances.length; j++) {
+      //     if (trailCurrentDistance + segmentDistances[j] >= trailDistance) {
+      //       trailSegmentIndex = j;
+      //       break;
+      //     }
+      //     trailCurrentDistance += segmentDistances[j];
+      //   }
+
+      //   const trailSegmentProgress = segmentDistances[trailSegmentIndex] > 0
+      //     ? (trailDistance - trailCurrentDistance) / segmentDistances[trailSegmentIndex]
+      //     : 0;
+
+      //   const trailFromDevice = devices.find(d => d.id === packet.path[trailSegmentIndex]);
+      //   const trailToDevice = devices.find(d => d.id === packet.path[trailSegmentIndex + 1]);
+
+      //   if (trailFromDevice && trailToDevice) {
+      //     const trailX = trailFromDevice.position.x + (trailToDevice.position.x - trailFromDevice.position.x) * trailSegmentProgress;
+      //     const trailY = trailFromDevice.position.y + (trailToDevice.position.y - trailFromDevice.position.y) * trailSegmentProgress;
+
+      //     const alpha = (1 - i / trailLength) * 0.5;
+      //     const size = Math.max(2, 7 - i);
+
+      //     ctx.fillStyle = getPacketColor(packet.type) + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+      //     ctx.beginPath();
+      //     ctx.arc(trailX, trailY, size, 0, 2 * Math.PI);
+      //     ctx.fill();
+      //   }
+      // }
+
+      // Draw main packet without glow effect to prevent ghosting
+      // Removed gradient/glow effect completely
 
       // Main packet body
       ctx.fillStyle = getPacketColor(packet.type);
@@ -312,17 +404,18 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       ctx.fill();
       ctx.stroke();
 
-      // Packet type label with better visibility
+      // Packet type label
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 10px Arial';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(packet.type, x, y);
 
-      // Show packet info on hover (simplified)
-      ctx.fillStyle = '#333333';
+      // Show packet info
+      const infoText = `${packet.sourceIP} → ${packet.destinationIP}`;
       ctx.font = '8px Arial';
-      ctx.fillText(`${packet.sourceIP} → ${packet.destinationIP}`, x, y + 25);
+      ctx.fillStyle = '#333333';
+      ctx.fillText(infoText, x, y + 25);
     };
 
     const drawDragConnection = (ctx: CanvasRenderingContext2D) => {
@@ -337,27 +430,36 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       ctx.stroke();
       ctx.setLineDash([]);
     };
-    const canvas = canvasRef.current;
-    if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      // Fill background
+      ctx.fillStyle = '#fafafa';
+      ctx.fillRect(0, 0, displayWidth, displayHeight);
 
-    // High DPI canvas setup
-    const displayWidth = canvasSize.width;
-    const displayHeight = canvasSize.height;
-    
-    canvas.width = displayWidth * pixelRatio;
-    canvas.height = displayHeight * pixelRatio;
-    canvas.style.width = displayWidth + 'px';
-    canvas.style.height = displayHeight + 'px';
-    
-    ctx.scale(pixelRatio, pixelRatio);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+      // Draw grid
+      drawGrid(ctx);
 
-    // Clear canvas
-    ctx.clearRect(0, 0, displayWidth, displayHeight);
+      // Draw segments
+      segments.forEach(segment => drawSegment(ctx, segment));
+
+      // Draw physical connections
+      connections.forEach(connection => drawConnection(ctx, connection));
+
+      // Draw connections between devices in same L2 segment (logical)
+      drawLogicalConnections(ctx);
+
+      // Draw devices
+      devices.forEach(device => drawDevice(ctx, device, device.id === dragState.draggingDevice));
+
+      // Draw ports for selected device or in connection mode
+      if (selectedDevice || connectionMode) {
+        const deviceToDraw = selectedDevice ? devices.find(d => d.id === selectedDevice) : null;
+        if (deviceToDraw) drawPorts(ctx, deviceToDraw);
+      }
+
+      // Draw drag connection if dragging
+      if (dragState.isDragging && dragState.dragFrom && dragState.dragTo) {
+        drawDragConnection(ctx);
+      }
 
     // Draw grid
     drawGrid(ctx);
@@ -385,10 +487,31 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
       drawDragConnection(ctx);
     }
 
-    // Draw packets with improved animations
+    // Draw packets
     packets.forEach(packet => drawEnhancedPacket(ctx, packet));
 
   }, [devices, segments, packets, connections, selectedDevice, selectedSegment, selectedConnection, connectionMode, canvasSize, dragState, pixelRatio]);
+
+  // Animation loop for smooth packet movement
+  useEffect(() => {
+    let animationId: number;
+
+    const animate = () => {
+      if (packets.length > 0) {
+        animationId = requestAnimationFrame(animate);
+      }
+    };
+
+    if (packets.length > 0) {
+      animationId = requestAnimationFrame(animate);
+    }
+
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
+  }, [packets.length]);
 
   // Utility functions
   const getCanvasCoordinates = (event: React.MouseEvent<HTMLCanvasElement>) => {

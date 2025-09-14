@@ -1,4 +1,4 @@
-# Lean Network - ネットワークシミュレーター
+# Packet Explorer
 
 ## 作品の目的
 

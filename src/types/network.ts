@@ -15,6 +15,7 @@ export interface NetworkDevice {
   subnetMask?: string;
   defaultGateway?: string;
   arpTable: Record<string, string>; // IP -> MAC
+  macTable?: Record<string, string>; // MAC -> Port ID (for switches)
   routingTable?: RoutingEntry[];
   ports: DevicePort[];
 }
@@ -57,6 +58,11 @@ export interface Packet {
   currentPosition: number;
   animation?: PacketAnimation;
   createdAt: number;
+  // For ICMP reply generation
+  needsReply?: boolean;
+  replySourceId?: string;
+  replyDestinationId?: string;
+  isReply?: boolean; // Mark if this is a reply packet
 }
 
 export interface Connection {
@@ -69,6 +75,14 @@ export interface Connection {
   status: 'connected' | 'disconnected';
 }
 
+export interface PingResult {
+  deviceId: string;
+  targetIP: string;
+  responseTime: number;
+  success: boolean;
+  timestamp: number;
+}
+
 export interface NetworkState {
   devices: NetworkDevice[];
   segments: NetworkSegment[];
@@ -79,4 +93,5 @@ export interface NetworkState {
   selectedConnection: string | null;
   connectionMode: boolean; // UI mode for creating connections
   simulationSpeed: number;
+  pingResults: PingResult[];
 }
