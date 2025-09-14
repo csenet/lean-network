@@ -22,8 +22,7 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "build:worker": "echo 'Worker build complete'",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run build && npx wrangler deploy",
     "dev:worker": "wrangler dev"
   },
   "eslintConfig": {
