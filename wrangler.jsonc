@@ -1,0 +1,108 @@
+{
+  "name": "lean-network",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static Assets Configuration
+  "assets": {
+    "directory": "./build"
+  },
+
+  // Environment variables (optional)
+  "vars": {
+    // "API_URL": "https://api.example.com"
+  },
+
+  // Development settings
+  "dev": {
+    "port": 8787,
+    "local_protocol": "http",
+    "ip": "0.0.0.0"
+  },
+
+  // Routes (optional - for custom domain)
+  // "routes": [
+  //   { "pattern": "lean-network.example.com", "custom_domain": true }
+  // ],
+
+  // D1 Database bindings (if needed)
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "lean-network-db",
+  //     "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  //   }
+  // ],
+
+  // KV Namespace bindings (if needed)
+  // "kv_namespaces": [
+  //   {
+  //     "binding": "CACHE",
+  //     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  //     "preview_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  //   }
+  // ],
+
+  // R2 Bucket bindings (if needed)
+  // "r2_buckets": [
+  //   {
+  //     "binding": "STORAGE",
+  //     "bucket_name": "lean-network-storage"
+  //   }
+  // ],
+
+  // Durable Object bindings (if needed)
+  // "durable_objects": {
+  //   "bindings": [
+  //     {
+  //       "name": "STATE",
+  //       "class_name": "StateManager",
+  //       "script_name": "lean-network"
+  //     }
+  //   ]
+  // },
+
+  // Analytics Engine bindings (if needed)
+  // "analytics_engine_datasets": [
+  //   {
+  //     "binding": "ANALYTICS"
+  //   }
+  // ],
+
+  // Browser Rendering bindings (if needed)
+  // "browser": {
+  //   "binding": "BROWSER"
+  // },
+
+  // AI bindings (if needed)
+  // "ai": {
+  //   "binding": "AI"
+  // },
+
+  // Observability settings
+  "observability": {
+    "enabled": true
+  },
+
+  // Placement (for edge location)
+  // "placement": {
+  //   "mode": "smart"
+  // },
+
+  // Limits
+  "limits": {
+    "cpu_ms": 50
+  }
+
+  // Triggers (Cron, Queue, etc.)
+  // "triggers": {
+  //   "crons": ["0 */1 * * *"],
+  //   "queues": [
+  //     {
+  //       "queue": "my-queue",
+  //       "max_batch_size": 10,
+  //       "max_batch_timeout": 30
+  //     }
+  //   ]
+  // }
+}
