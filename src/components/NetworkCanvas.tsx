@@ -75,269 +75,268 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
     }
   };
 
-  // Drawing functions
-  const drawGrid = (ctx: CanvasRenderingContext2D) => {
-    ctx.strokeStyle = '#f0f0f0';
-    ctx.lineWidth = 1;
-    
-    for (let x = 0; x <= canvasSize.width; x += 20) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvasSize.height);
-      ctx.stroke();
-    }
-    
-    for (let y = 0; y <= canvasSize.height; y += 20) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvasSize.width, y);
-      ctx.stroke();
-    }
-  };
-
-  const drawSegment = (ctx: CanvasRenderingContext2D, segment: NetworkSegment) => {
-    const segmentDevices = devices.filter(d => segment.devices.includes(d.id));
-    if (segmentDevices.length === 0) return;
-
-    // Calculate bounding box for segment devices
-    const positions = segmentDevices.map(d => d.position);
-    const minX = Math.min(...positions.map(p => p.x)) - 50;
-    const minY = Math.min(...positions.map(p => p.y)) - 50;
-    const maxX = Math.max(...positions.map(p => p.x)) + 50;
-    const maxY = Math.max(...positions.map(p => p.y)) + 50;
-
-    // Draw segment background
-    ctx.fillStyle = segment.color + '20';
-    ctx.strokeStyle = segment.color;
-    ctx.lineWidth = selectedSegment === segment.id ? 3 : 1;
-    ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
-    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
-
-    // Draw segment label
-    ctx.fillStyle = segment.color;
-    ctx.font = '12px Arial';
-    ctx.fillText(
-      `${segment.type}: ${segment.name}${segment.network ? ` (${segment.network})` : ''}`,
-      minX + 5,
-      minY + 15
-    );
-  };
-
-  const drawConnection = (ctx: CanvasRenderingContext2D, connection: Connection) => {
-    const fromDevice = devices.find(d => d.id === connection.fromDeviceId);
-    const toDevice = devices.find(d => d.id === connection.toDeviceId);
-    
-    if (!fromDevice || !toDevice) return;
-
-    ctx.strokeStyle = selectedConnection === connection.id ? '#ff0000' : '#333333';
-    ctx.lineWidth = selectedConnection === connection.id ? 3 : 2;
-    ctx.beginPath();
-    ctx.moveTo(fromDevice.position.x, fromDevice.position.y);
-    ctx.lineTo(toDevice.position.x, toDevice.position.y);
-    ctx.stroke();
-
-    // Draw connection status indicator
-    const midX = (fromDevice.position.x + toDevice.position.x) / 2;
-    const midY = (fromDevice.position.y + toDevice.position.y) / 2;
-    
-    ctx.fillStyle = connection.status === 'connected' ? '#4CAF50' : '#F44336';
-    ctx.beginPath();
-    ctx.arc(midX, midY, 4, 0, 2 * Math.PI);
-    ctx.fill();
-  };
-
-  const drawLogicalConnections = (ctx: CanvasRenderingContext2D) => {
-    segments.forEach(segment => {
-      if (segment.type === 'L2') {
-        const segmentDevices = devices.filter(d => segment.devices.includes(d.id));
-        
-        // Draw connections between all devices in L2 segment
-        for (let i = 0; i < segmentDevices.length - 1; i++) {
-          for (let j = i + 1; j < segmentDevices.length; j++) {
-            const device1 = segmentDevices[i];
-            const device2 = segmentDevices[j];
-            
-            ctx.strokeStyle = '#cccccc';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(device1.position.x, device1.position.y);
-            ctx.lineTo(device2.position.x, device2.position.y);
-            ctx.stroke();
-          }
-        }
-      }
-    });
-  };
-
-  const drawDevice = (ctx: CanvasRenderingContext2D, device: NetworkDevice, isDragging: boolean = false) => {
-    const { x, y } = device.position;
-    const radius = 20;
-    
-    // Set opacity for dragging effect
-    const originalAlpha = ctx.globalAlpha;
-    if (isDragging) {
-      ctx.globalAlpha = 0.7;
-    }
-    
-    // Device circle with dragging glow effect
-    if (isDragging) {
-      // Add glow effect for dragged device
-      const glowGradient = ctx.createRadialGradient(x, y, 0, x, y, radius + 10);
-      glowGradient.addColorStop(0, getDeviceColor(device));
-      glowGradient.addColorStop(1, getDeviceColor(device) + '00');
-      ctx.fillStyle = glowGradient;
-      ctx.beginPath();
-      ctx.arc(x, y, radius + 10, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-    
-    ctx.fillStyle = getDeviceColor(device);
-    ctx.strokeStyle = selectedDevice === device.id ? '#ff0000' : isDragging ? '#4CAF50' : '#333333';
-    ctx.lineWidth = selectedDevice === device.id ? 3 : isDragging ? 3 : 2;
-    
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.stroke();
-
-    // Device icon
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(getDeviceIcon(device.type), x, y + 4);
-
-    // Device name
-    ctx.fillStyle = '#333333';
-    ctx.font = '10px Arial';
-    ctx.fillText(device.name, x, y + radius + 15);
-
-    // IP Address (if exists)
-    if (device.ipAddress) {
-      ctx.fillText(device.ipAddress, x, y + radius + 28);
-    }
-    
-    // Restore original alpha
-    ctx.globalAlpha = originalAlpha;
-  };
-
-  const drawPorts = (ctx: CanvasRenderingContext2D, device: NetworkDevice) => {
-    const { x, y } = device.position;
-    const portRadius = 6;
-    const deviceRadius = 20;
-    
-    device.ports.forEach((port, index) => {
-      const angle = (index * 2 * Math.PI) / device.ports.length;
-      const portX = x + Math.cos(angle) * (deviceRadius + 15);
-      const portY = y + Math.sin(angle) * (deviceRadius + 15);
-      
-      // Port circle
-      ctx.fillStyle = port.connectedTo ? '#4CAF50' : '#FFC107';
-      ctx.strokeStyle = '#333333';
-      ctx.lineWidth = 1;
-      
-      ctx.beginPath();
-      ctx.arc(portX, portY, portRadius, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-      
-      // Port label
-      ctx.fillStyle = '#333333';
-      ctx.font = '8px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(port.name, portX, portY + portRadius + 10);
-      
-      // Connection line to device
-      ctx.strokeStyle = '#cccccc';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(portX, portY);
-      ctx.stroke();
-    });
-  };
-
-  const drawEnhancedPacket = (ctx: CanvasRenderingContext2D, packet: Packet) => {
-    if (packet.path.length < 2) return;
-
-    const currentDeviceId = packet.path[packet.currentPosition];
-    const nextDeviceId = packet.path[packet.currentPosition + 1];
-    
-    const currentDevice = devices.find(d => d.id === currentDeviceId);
-    const nextDevice = devices.find(d => d.id === nextDeviceId);
-    
-    if (!currentDevice || !nextDevice) return;
-
-    // Smooth animation progress
-    const timeSinceCreated = Date.now() - packet.createdAt;
-    const animationDuration = 2000; // 2 seconds per hop
-    const progress = Math.min((timeSinceCreated % animationDuration) / animationDuration, 1);
-
-    const x = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * progress;
-    const y = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * progress;
-
-    // Draw packet trail effect
-    const trailLength = 5;
-    for (let i = 0; i < trailLength; i++) {
-      const trailProgress = Math.max(0, progress - (i * 0.1));
-      const trailX = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * trailProgress;
-      const trailY = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * trailProgress;
-      const alpha = (1 - i / trailLength) * 0.3;
-      
-      ctx.fillStyle = getPacketColor(packet.type) + Math.floor(alpha * 255).toString(16).padStart(2, '0');
-      ctx.beginPath();
-      ctx.arc(trailX, trailY, 6 - i, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-
-    // Draw main packet with glow effect
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, 15);
-    gradient.addColorStop(0, getPacketColor(packet.type));
-    gradient.addColorStop(0.7, getPacketColor(packet.type) + '80');
-    gradient.addColorStop(1, getPacketColor(packet.type) + '00');
-    
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(x, y, 15, 0, 2 * Math.PI);
-    ctx.fill();
-
-    // Main packet body
-    ctx.fillStyle = getPacketColor(packet.type);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    
-    ctx.beginPath();
-    ctx.arc(x, y, 10, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.stroke();
-
-    // Packet type label with better visibility
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 10px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(packet.type, x, y);
-
-    // Show packet info on hover (simplified)
-    ctx.fillStyle = '#333333';
-    ctx.font = '8px Arial';
-    ctx.fillText(`${packet.sourceIP} → ${packet.destinationIP}`, x, y + 25);
-  };
-
-  const drawDragConnection = (ctx: CanvasRenderingContext2D) => {
-    if (!dragState.dragFrom || !dragState.dragTo) return;
-
-    ctx.strokeStyle = '#4CAF50';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(dragState.dragFrom.x, dragState.dragFrom.y);
-    ctx.lineTo(dragState.dragTo.x, dragState.dragTo.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  };
-
   // Canvas rendering
   useEffect(() => {
+    // Drawing functions
+    const drawGrid = (ctx: CanvasRenderingContext2D) => {
+      ctx.strokeStyle = '#f0f0f0';
+      ctx.lineWidth = 1;
+
+      for (let x = 0; x <= canvasSize.width; x += 20) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvasSize.height);
+        ctx.stroke();
+      }
+
+      for (let y = 0; y <= canvasSize.height; y += 20) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvasSize.width, y);
+        ctx.stroke();
+      }
+    };
+
+    const drawSegment = (ctx: CanvasRenderingContext2D, segment: NetworkSegment) => {
+      const segmentDevices = devices.filter(d => segment.devices.includes(d.id));
+      if (segmentDevices.length === 0) return;
+
+      // Calculate bounding box for segment devices
+      const positions = segmentDevices.map(d => d.position);
+      const minX = Math.min(...positions.map(p => p.x)) - 50;
+      const minY = Math.min(...positions.map(p => p.y)) - 50;
+      const maxX = Math.max(...positions.map(p => p.x)) + 50;
+      const maxY = Math.max(...positions.map(p => p.y)) + 50;
+
+      // Draw segment background
+      ctx.fillStyle = segment.color + '20';
+      ctx.strokeStyle = segment.color;
+      ctx.lineWidth = selectedSegment === segment.id ? 3 : 1;
+      ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+      ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+      // Draw segment label
+      ctx.fillStyle = segment.color;
+      ctx.font = '12px Arial';
+      ctx.fillText(
+        `${segment.type}: ${segment.name}${segment.network ? ` (${segment.network})` : ''}`,
+        minX + 5,
+        minY + 15
+      );
+    };
+
+    const drawConnection = (ctx: CanvasRenderingContext2D, connection: Connection) => {
+      const fromDevice = devices.find(d => d.id === connection.fromDeviceId);
+      const toDevice = devices.find(d => d.id === connection.toDeviceId);
+
+      if (!fromDevice || !toDevice) return;
+
+      ctx.strokeStyle = selectedConnection === connection.id ? '#ff0000' : '#333333';
+      ctx.lineWidth = selectedConnection === connection.id ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(fromDevice.position.x, fromDevice.position.y);
+      ctx.lineTo(toDevice.position.x, toDevice.position.y);
+      ctx.stroke();
+
+      // Draw connection status indicator
+      const midX = (fromDevice.position.x + toDevice.position.x) / 2;
+      const midY = (fromDevice.position.y + toDevice.position.y) / 2;
+
+      ctx.fillStyle = connection.status === 'connected' ? '#4CAF50' : '#F44336';
+      ctx.beginPath();
+      ctx.arc(midX, midY, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    };
+
+    const drawLogicalConnections = (ctx: CanvasRenderingContext2D) => {
+      segments.forEach(segment => {
+        if (segment.type === 'L2') {
+          const segmentDevices = devices.filter(d => segment.devices.includes(d.id));
+
+          // Draw connections between all devices in L2 segment
+          for (let i = 0; i < segmentDevices.length - 1; i++) {
+            for (let j = i + 1; j < segmentDevices.length; j++) {
+              const device1 = segmentDevices[i];
+              const device2 = segmentDevices[j];
+
+              ctx.strokeStyle = '#cccccc';
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(device1.position.x, device1.position.y);
+              ctx.lineTo(device2.position.x, device2.position.y);
+              ctx.stroke();
+            }
+          }
+        }
+      });
+    };
+
+    const drawDevice = (ctx: CanvasRenderingContext2D, device: NetworkDevice, isDragging: boolean = false) => {
+      const { x, y } = device.position;
+      const radius = 20;
+
+      // Set opacity for dragging effect
+      const originalAlpha = ctx.globalAlpha;
+      if (isDragging) {
+        ctx.globalAlpha = 0.7;
+      }
+
+      // Device circle with dragging glow effect
+      if (isDragging) {
+        // Add glow effect for dragged device
+        const glowGradient = ctx.createRadialGradient(x, y, 0, x, y, radius + 10);
+        glowGradient.addColorStop(0, getDeviceColor(device));
+        glowGradient.addColorStop(1, getDeviceColor(device) + '00');
+        ctx.fillStyle = glowGradient;
+        ctx.beginPath();
+        ctx.arc(x, y, radius + 10, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = getDeviceColor(device);
+      ctx.strokeStyle = selectedDevice === device.id ? '#ff0000' : isDragging ? '#4CAF50' : '#333333';
+      ctx.lineWidth = selectedDevice === device.id ? 3 : isDragging ? 3 : 2;
+
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+
+      // Device icon
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(getDeviceIcon(device.type), x, y + 4);
+
+      // Device name
+      ctx.fillStyle = '#333333';
+      ctx.font = '10px Arial';
+      ctx.fillText(device.name, x, y + radius + 15);
+
+      // IP Address (if exists)
+      if (device.ipAddress) {
+        ctx.fillText(device.ipAddress, x, y + radius + 28);
+      }
+
+      // Restore original alpha
+      ctx.globalAlpha = originalAlpha;
+    };
+
+    const drawPorts = (ctx: CanvasRenderingContext2D, device: NetworkDevice) => {
+      const { x, y } = device.position;
+      const portRadius = 6;
+      const deviceRadius = 20;
+
+      device.ports.forEach((port, index) => {
+        const angle = (index * 2 * Math.PI) / device.ports.length;
+        const portX = x + Math.cos(angle) * (deviceRadius + 15);
+        const portY = y + Math.sin(angle) * (deviceRadius + 15);
+
+        // Port circle
+        ctx.fillStyle = port.connectedTo ? '#4CAF50' : '#FFC107';
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.arc(portX, portY, portRadius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+
+        // Port label
+        ctx.fillStyle = '#333333';
+        ctx.font = '8px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(port.name, portX, portY + portRadius + 10);
+
+        // Connection line to device
+        ctx.strokeStyle = '#cccccc';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(portX, portY);
+        ctx.stroke();
+      });
+    };
+
+    const drawEnhancedPacket = (ctx: CanvasRenderingContext2D, packet: Packet) => {
+      if (packet.path.length < 2) return;
+
+      const currentDeviceId = packet.path[packet.currentPosition];
+      const nextDeviceId = packet.path[packet.currentPosition + 1];
+
+      const currentDevice = devices.find(d => d.id === currentDeviceId);
+      const nextDevice = devices.find(d => d.id === nextDeviceId);
+
+      if (!currentDevice || !nextDevice) return;
+
+      // Smooth animation progress
+      const timeSinceCreated = Date.now() - packet.createdAt;
+      const animationDuration = 2000; // 2 seconds per hop
+      const progress = Math.min((timeSinceCreated % animationDuration) / animationDuration, 1);
+
+      const x = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * progress;
+      const y = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * progress;
+
+      // Draw packet trail effect
+      const trailLength = 5;
+      for (let i = 0; i < trailLength; i++) {
+        const trailProgress = Math.max(0, progress - (i * 0.1));
+        const trailX = currentDevice.position.x + (nextDevice.position.x - currentDevice.position.x) * trailProgress;
+        const trailY = currentDevice.position.y + (nextDevice.position.y - currentDevice.position.y) * trailProgress;
+        const alpha = (1 - i / trailLength) * 0.3;
+
+        ctx.fillStyle = getPacketColor(packet.type) + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+        ctx.beginPath();
+        ctx.arc(trailX, trailY, 6 - i, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      // Draw main packet with glow effect
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, 15);
+      gradient.addColorStop(0, getPacketColor(packet.type));
+      gradient.addColorStop(0.7, getPacketColor(packet.type) + '80');
+      gradient.addColorStop(1, getPacketColor(packet.type) + '00');
+
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Main packet body
+      ctx.fillStyle = getPacketColor(packet.type);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+
+      // Packet type label with better visibility
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(packet.type, x, y);
+
+      // Show packet info on hover (simplified)
+      ctx.fillStyle = '#333333';
+      ctx.font = '8px Arial';
+      ctx.fillText(`${packet.sourceIP} → ${packet.destinationIP}`, x, y + 25);
+    };
+
+    const drawDragConnection = (ctx: CanvasRenderingContext2D) => {
+      if (!dragState.dragFrom || !dragState.dragTo) return;
+
+      ctx.strokeStyle = '#4CAF50';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(dragState.dragFrom.x, dragState.dragFrom.y);
+      ctx.lineTo(dragState.dragTo.x, dragState.dragTo.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -389,7 +388,7 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
     // Draw packets with improved animations
     packets.forEach(packet => drawEnhancedPacket(ctx, packet));
 
-  }, [devices, segments, packets, connections, selectedDevice, selectedSegment, selectedConnection, connectionMode, canvasSize, dragState, pixelRatio, drawGrid, drawSegment, drawLogicalConnections, drawConnection, drawDevice, drawDragConnection, drawEnhancedPacket]);
+  }, [devices, segments, packets, connections, selectedDevice, selectedSegment, selectedConnection, connectionMode, canvasSize, dragState, pixelRatio]);
 
   // Utility functions
   const getCanvasCoordinates = (event: React.MouseEvent<HTMLCanvasElement>) => {

@@ -138,4 +138,5 @@ dist
 *.tmp
 *.temp
 tmp/
-temp/
+temp/# Cloudflare deployment
+/wrangler.toml
