@@ -194,38 +194,6 @@ export const useNetworkSimulation = () => {
     }));
   }, []);
 
-  const loadPreset = useCallback((presetName: string) => {
-    // Clear current state first
-    setState({
-      devices: [],
-      segments: [],
-      packets: [],
-      connections: [],
-      selectedDevice: null,
-      selectedSegment: null,
-      selectedConnection: null,
-      connectionMode: false,
-      simulationSpeed: 1
-    });
-
-    // Load specific preset
-    setTimeout(() => {
-      switch (presetName) {
-        case 'direct-pcs':
-          loadDirectPCsPreset();
-          break;
-        case 'pcs-switch':
-          loadPCsSwitchPreset();
-          break;
-        case 'network-with-router':
-          loadNetworkWithRouterPreset();
-          break;
-        default:
-          console.warn('Unknown preset:', presetName);
-      }
-    }, 50); // Small delay to ensure state is cleared
-  }, []);
-
   const loadDirectPCsPreset = useCallback(() => {
     const pc1Id = generateDeviceId();
     const pc2Id = generateDeviceId();
@@ -456,6 +424,38 @@ export const useNetworkSimulation = () => {
     }));
   }, []);
 
+  const loadPreset = useCallback((presetName: string) => {
+    // Clear current state first
+    setState({
+      devices: [],
+      segments: [],
+      packets: [],
+      connections: [],
+      selectedDevice: null,
+      selectedSegment: null,
+      selectedConnection: null,
+      connectionMode: false,
+      simulationSpeed: 1
+    });
+
+    // Load specific preset
+    setTimeout(() => {
+      switch (presetName) {
+        case 'direct-pcs':
+          loadDirectPCsPreset();
+          break;
+        case 'pcs-switch':
+          loadPCsSwitchPreset();
+          break;
+        case 'network-with-router':
+          loadNetworkWithRouterPreset();
+          break;
+        default:
+          console.warn('Unknown preset:', presetName);
+      }
+    }, 50); // Small delay to ensure state is cleared
+  }, [loadDirectPCsPreset, loadPCsSwitchPreset, loadNetworkWithRouterPreset]);
+
   const selectDevice = useCallback((deviceId: string | null) => {
     setState(prev => ({
       ...prev,
@@ -637,9 +637,10 @@ export const useNetworkSimulation = () => {
   }, [state.packets.length, state.simulationSpeed]);
 
   // Auto-assign devices to segments when IP addresses change
+  const devicesKey = state.devices.map(d => (d.ipAddress || '') + (d.subnetMask || '')).join(',');
   useEffect(() => {
     autoAssignToSegments();
-  }, [state.devices.map(d => (d.ipAddress || '') + (d.subnetMask || '')).join(','), autoAssignToSegments]);
+  }, [devicesKey, autoAssignToSegments]);
 
   return {
     ...state,

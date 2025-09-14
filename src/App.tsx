@@ -34,7 +34,6 @@ const App: React.FC = () => {
     sendPacket,
     clearSimulation,
     loadPreset,
-    selectDevice,
     selectSegment,
     selectConnection,
     setSimulationSpeed,

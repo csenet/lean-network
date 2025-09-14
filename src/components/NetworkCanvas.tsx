@@ -389,7 +389,7 @@ const NetworkCanvas: React.FC<NetworkCanvasProps> = ({
     // Draw packets with improved animations
     packets.forEach(packet => drawEnhancedPacket(ctx, packet));
 
-  }, [devices, segments, packets, connections, selectedDevice, selectedSegment, selectedConnection, connectionMode, canvasSize, dragState, pixelRatio]);
+  }, [devices, segments, packets, connections, selectedDevice, selectedSegment, selectedConnection, connectionMode, canvasSize, dragState, pixelRatio, drawGrid, drawSegment, drawLogicalConnections, drawConnection, drawDevice, drawDragConnection, drawEnhancedPacket]);
 
   // Utility functions
   const getCanvasCoordinates = (event: React.MouseEvent<HTMLCanvasElement>) => {
