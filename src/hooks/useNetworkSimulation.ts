@@ -256,10 +256,12 @@ export const useNetworkSimulation = () => {
 
     const connection: Connection = {
       id: generateConnectionId(),
-      sourceDevice: pc1Id,
-      sourcePort: pc1.ports[0].id,
-      targetDevice: pc2Id,
-      targetPort: pc2.ports[0].id
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: pc2Id,
+      toPortId: pc2.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
     };
 
     setState(prev => ({
@@ -310,18 +312,22 @@ export const useNetworkSimulation = () => {
 
     const connection1: Connection = {
       id: generateConnectionId(),
-      sourceDevice: pc1Id,
-      sourcePort: pc1.ports[0].id,
-      targetDevice: switchId,
-      targetPort: switch1.ports[0].id
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
     };
 
     const connection2: Connection = {
       id: generateConnectionId(),
-      sourceDevice: pc2Id,
-      sourcePort: pc2.ports[0].id,
-      targetDevice: switchId,
-      targetPort: switch1.ports[1].id
+      fromDeviceId: pc2Id,
+      fromPortId: pc2.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[1].id,
+      type: 'ethernet',
+      status: 'connected'
     };
 
     setState(prev => ({
@@ -332,8 +338,14 @@ export const useNetworkSimulation = () => {
   }, []);
 
   const loadNetworkWithRouterPreset = useCallback(() => {
+    const pc1Id = generateDeviceId();
+    const pc2Id = generateDeviceId();
+    const pc3Id = generateDeviceId();
+    const switchId = generateDeviceId();
+    const routerId = generateDeviceId();
+
     const pc1: NetworkDevice = {
-      id: generateDeviceId(),
+      id: pc1Id,
       name: 'PC1',
       type: 'client',
       position: { x: 100, y: 200 },
@@ -346,7 +358,7 @@ export const useNetworkSimulation = () => {
     };
 
     const pc2: NetworkDevice = {
-      id: generateDeviceId(),
+      id: pc2Id,
       name: 'PC2',
       type: 'client',
       position: { x: 300, y: 200 },
@@ -359,7 +371,7 @@ export const useNetworkSimulation = () => {
     };
 
     const switch1: NetworkDevice = {
-      id: generateDeviceId(),
+      id: switchId,
       name: 'Switch1',
       type: 'switch',
       position: { x: 200, y: 350 },
@@ -369,7 +381,7 @@ export const useNetworkSimulation = () => {
     };
 
     const router1: NetworkDevice = {
-      id: generateDeviceId(),
+      id: routerId,
       name: 'Router1',
       type: 'router',
       position: { x: 500, y: 350 },
@@ -385,7 +397,7 @@ export const useNetworkSimulation = () => {
     };
 
     const pc3: NetworkDevice = {
-      id: generateDeviceId(),
+      id: pc3Id,
       name: 'PC3',
       type: 'client',
       position: { x: 700, y: 200 },
@@ -397,9 +409,50 @@ export const useNetworkSimulation = () => {
       arpTable: {}
     };
 
+    const connection1: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc1Id,
+      fromPortId: pc1.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection2: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: pc2Id,
+      fromPortId: pc2.ports[0].id,
+      toDeviceId: switchId,
+      toPortId: switch1.ports[1].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection3: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: switchId,
+      fromPortId: switch1.ports[2].id,
+      toDeviceId: routerId,
+      toPortId: router1.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
+    const connection4: Connection = {
+      id: generateConnectionId(),
+      fromDeviceId: routerId,
+      fromPortId: router1.ports[1].id,
+      toDeviceId: pc3Id,
+      toPortId: pc3.ports[0].id,
+      type: 'ethernet',
+      status: 'connected'
+    };
+
     setState(prev => ({
       ...prev,
-      devices: [pc1, pc2, switch1, router1, pc3]
+      devices: [pc1, pc2, switch1, router1, pc3],
+      connections: [connection1, connection2, connection3, connection4]
     }));
   }, []);
 
